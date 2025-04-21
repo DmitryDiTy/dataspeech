@@ -1,4 +1,4 @@
-from datasets import load_dataset, Audio
+from datasets import load_dataset, Audio, load_from_disk
 from multiprocess import set_start_method
 from dataspeech import rate_apply, pitch_apply, snr_apply, squim_apply
 import torch
@@ -11,6 +11,8 @@ if __name__ == "__main__":
     
     
     parser.add_argument("dataset_name", type=str, help="Path or name of the dataset. See: https://huggingface.co/docs/datasets/v2.17.0/en/package_reference/loading_methods#datasets.load_dataset.path")
+    parser.add_argument("--is_local", default=False, type=bool, help="Dataset exists locally.")
+    parser.add_argument("--download_dir", default="/home/.cache/huggingface", type=str, help="Cache directory for datasets.")
     parser.add_argument("--configuration", default=None, type=str, help="Dataset configuration to use, if necessary.")
     parser.add_argument("--output_dir", default=None, type=str, help="If specified, save the dataset on disk with this path.")
     parser.add_argument("--repo_id", default=None, type=str, help="If specified, push the dataset to the hub.")
@@ -30,9 +32,12 @@ if __name__ == "__main__":
     args = parser.parse_args()
     
     if args.configuration:
-        dataset = load_dataset(args.dataset_name, args.configuration, num_proc=args.cpu_num_workers,)
+        dataset = load_dataset(args.dataset_name, args.configuration, cache_dir=args.download_dir, num_proc=args.cpu_num_workers,)
+    elif args.is_local:
+        dataset = load_from_disk(args.dataset_name)
     else:
-        dataset = load_dataset(args.dataset_name, num_proc=args.cpu_num_workers,)
+        dataset = load_dataset(args.dataset_name, cache_dir=args.download_dir, num_proc=args.cpu_num_workers,)
+    
         
     audio_column_name = "audio" if args.rename_column else args.audio_column_name
     text_column_name = "text" if args.rename_column else args.text_column_name
@@ -74,40 +79,40 @@ if __name__ == "__main__":
         fn_kwargs={"audio_column_name": audio_column_name},
     )
     
-    print("Compute speaking rate")
-    if "speech_duration" in snr_dataset[next(iter(snr_dataset.keys()))].features:    
-        rate_dataset = snr_dataset.map(
-            rate_apply,
-            with_rank=False,
-            num_proc=args.cpu_num_workers,
-            writer_batch_size= args.cpu_writer_batch_size,
-            fn_kwargs={"audio_column_name": audio_column_name, "text_column_name": text_column_name},
-        )
-    else:
-        rate_dataset = dataset.map(
-            rate_apply,
-            with_rank=False,
-            num_proc=args.cpu_num_workers,
-            writer_batch_size= args.cpu_writer_batch_size,
-            remove_columns=[audio_column_name], # tricks to avoid rewritting audio
-            fn_kwargs={"audio_column_name": audio_column_name, "text_column_name": text_column_name},
-        )
+    # print("Compute speaking rate")
+    # if "speech_duration" in snr_dataset[next(iter(snr_dataset.keys()))].features:    
+    #     rate_dataset = snr_dataset.map(
+    #         rate_apply,
+    #         with_rank=False,
+    #         num_proc=args.cpu_num_workers,
+    #         writer_batch_size= args.cpu_writer_batch_size,
+    #         fn_kwargs={"audio_column_name": audio_column_name, "text_column_name": text_column_name},
+    #     )
+    # else:
+    #     rate_dataset = dataset.map(
+    #         rate_apply,
+    #         with_rank=False,
+    #         num_proc=args.cpu_num_workers,
+    #         writer_batch_size= args.cpu_writer_batch_size,
+    #         remove_columns=[audio_column_name], # tricks to avoid rewritting audio
+    #         fn_kwargs={"audio_column_name": audio_column_name, "text_column_name": text_column_name},
+    #     )
     
     for split in dataset.keys():
         dataset[split] = pitch_dataset[split].add_column("snr", snr_dataset[split]["snr"]).add_column("c50", snr_dataset[split]["c50"])
         if "speech_duration" in snr_dataset[split]:
             dataset[split] = dataset[split].add_column("speech_duration", snr_dataset[split]["speech_duration"])
-        dataset[split] = dataset[split].add_column("speaking_rate", rate_dataset[split]["speaking_rate"]).add_column("phonemes", rate_dataset[split]["phonemes"])
+        # dataset[split] = dataset[split].add_column("speaking_rate", rate_dataset[split]["speaking_rate"]).add_column("phonemes", rate_dataset[split]["phonemes"])
         if args.apply_squim_quality_estimation:
             dataset[split] = dataset[split].add_column("stoi", squim_dataset[split]["stoi"]).add_column("si-sdr", squim_dataset[split]["sdr"]).add_column("pesq", squim_dataset[split]["pesq"])
     
     if args.output_dir:
         print("Saving to disk...")
         dataset.save_to_disk(args.output_dir)
-    if args.repo_id:
-        print("Pushing to the hub...")
-        if args.configuration:
-            dataset.push_to_hub(args.repo_id, args.configuration)
-        else:
-            dataset.push_to_hub(args.repo_id)
+    # if args.repo_id:
+    #     print("Pushing to the hub...")
+    #     if args.configuration:
+    #         dataset.push_to_hub(args.repo_id, args.configuration)
+    #     else:
+    #         dataset.push_to_hub(args.repo_id)
     
